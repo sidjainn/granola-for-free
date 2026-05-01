@@ -1,5 +1,6 @@
 #!/bin/bash
 # Daily Granola sync wrapper. Logs to ~/Library/Logs/granola-sync.log.
+# After sync, optionally commits + pushes the vault to a git remote (if vault is a git repo).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,5 +18,22 @@ cd "$REPO"
     exit 1
   fi
   "$REPO/.venv/bin/python" "$REPO/scripts/sync.py" --prune --api-fill --quiet
+
+  # Resolve vault path from config (single source of truth).
+  VAULT="$("$REPO/.venv/bin/python" -c "import sys; sys.path.insert(0, '$REPO/scripts'); import config; print(config.load().vault_path)")"
+
+  if [ -d "$VAULT/.git" ]; then
+    echo "--- vault git push ---"
+    cd "$VAULT"
+    git add -A
+    if ! git diff --cached --quiet; then
+      git -c user.email=granola-sync@local -c user.name="granola-sync" \
+          commit -m "sync $(date -u '+%Y-%m-%dT%H:%M:%SZ')" --quiet
+      git push --quiet 2>&1 || echo "WARN: git push failed (non-fatal)"
+    else
+      echo "no vault changes to commit"
+    fi
+  fi
+
   echo "===== $(date -u '+%Y-%m-%dT%H:%M:%SZ') sync end ====="
 } >> "$LOG" 2>&1
