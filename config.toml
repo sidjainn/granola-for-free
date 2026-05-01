@@ -4,7 +4,7 @@
 # Local fallback until Google Drive for Desktop is mounted.
 # Once Drive is mounted, change to:
 #   "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
-vault_path_glob = "~/GranolaVault"
+vault_path_glob = "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
 
 # Granola desktop cache. Current schema = cache-v6.json.
 granola_cache_path = "~/Library/Application Support/Granola/cache-v6.json"
