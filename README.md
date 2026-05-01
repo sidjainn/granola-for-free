@@ -2,9 +2,9 @@
 
 Keep your Granola meeting notes forever, even on the free plan.
 
-Granola's free plan hides notes older than 30 days. This tool pulls every meeting (notes, AI summary, transcript, folder, attendees) into a local Obsidian-compatible vault you own. Optionally syncs to Google Drive. Optionally runs daily on its own. You can also chat with the notes from Claude Code.
+Granola's free plan hides notes older than 30 days. This tool pulls every meeting (notes, AI summary, transcript, folder, attendees) into a local Obsidian-compatible vault you own. Optionally syncs to Google Drive. Optionally backs up to a private GitHub repo. Runs daily on its own. You can also chat with the notes from Claude Code.
 
-Tested on macOS only. Should work on Linux with small tweaks; Windows untested.
+macOS only. Should work on Linux with small tweaks; Windows untested.
 
 ---
 
@@ -12,131 +12,106 @@ Tested on macOS only. Should work on Linux with small tweaks; Windows untested.
 
 - **Pulls** meetings from Granola's local desktop cache (`cache-v6.json`).
 - **Enriches** with AI summaries + full transcripts via Granola's authenticated API (uses your already-signed-in desktop session token; no extra credentials).
-- **Mirrors** Granola's folder structure flat under a vault directory.
+- **Mirrors** Granola's folder structure under a vault directory.
 - **Renders** each meeting as markdown with frontmatter (title, date, attendees, tags, granola_id).
 - **Skips trashed** meetings; **prunes** vault when meetings are deleted.
-- **Idempotent**: re-running rewrites only what actually changed (sha256 of rendered content).
-- **Daily auto-sync** via launchd (macOS LaunchAgent).
+- **Idempotent**: re-running rewrites only what actually changed.
+- **Daily auto-sync** via launchd.
+- **Optional git auto-push** to a private repo after each sync.
 - **Chat** with the notes via a Claude Code slash command.
 
 ---
 
-## Prerequisites
+## Quick start
 
-1. **Granola desktop** installed and signed in. Open it at least once so the cache populates.
-2. **Python 3.11+** (`python3 --version`).
-3. **Claude Code** if you want the `/granola-sync` and `/granola-chat` slash commands. Optional — the same scripts work standalone from a terminal.
-4. **Google Drive for Desktop** *(optional)* — only if you want the vault on Drive.
+### 1. Prerequisites
 
----
+- **Granola desktop** installed and signed in. Open it once so the cache populates.
+- **Python 3.11+** (`python3 --version`).
+- **Claude Code** for the `/granola-sync` and `/granola-chat` slash commands. Optional — scripts run standalone too.
 
-## Install
+### 2. Clone + install
 
 ```bash
-git clone <this-repo> free-granola
+git clone https://github.com/sidjainn/granola-for-free.git free-granola
 cd free-granola
-
-# Isolated venv (Homebrew Python is externally-managed; PEP 668)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install git+https://github.com/pedramamini/GranolaMCP
-
-# Pick a vault path. Default is ~/GranolaVault. To use Drive instead, see "Sync to Google Drive" below.
-python3 scripts/config.py   # prints the resolved vault path; errors if path doesn't exist yet
 ```
 
-If `scripts/config.py` errors, edit `config.toml`:
+### 3. Pick a vault location
 
-```toml
-# Local-only:
-vault_path_glob = "~/GranolaVault"
+Default: a folder inside Google Drive for Desktop's My Drive — gets auto-synced to cloud for free.
 
-# Or Google Drive (after Drive for Desktop is installed and mounted):
-# vault_path_glob = "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
-```
-
-The vault directory must exist. Create it: `mkdir -p ~/GranolaVault`.
-
----
-
-## First sync
+Install Google Drive for Desktop and sign in. Wait for `~/Library/CloudStorage/GoogleDrive-<email>/My Drive/` to appear, then:
 
 ```bash
-.venv/bin/python scripts/sync.py --full --api-fill --dry-run --quiet   # preview
-.venv/bin/python scripts/sync.py --full --api-fill --quiet             # run
+GD=$(ls -d ~/Library/CloudStorage/GoogleDrive-*/My\ Drive 2>/dev/null | head -1)
+mkdir -p "$GD/GranolaVault"
 ```
 
-Flags:
-- `--full` — walk every meeting (default uses a 24h delta window after the first run).
-- `--api-fill` — fetch AI summaries + missing transcripts via Granola API. **Recommended on first run.**
-- `--prune` — delete vault files for meetings trashed in Granola.
-- `--dry-run` — print plan, write nothing.
-- `--since YYYY-MM-DD` — only meetings on/after this date.
-- `--quiet` — suppress per-meeting log lines.
+Default `config.toml` already points to this path. No edit needed.
 
-Output is a single JSON summary with counts: `added / updated / unchanged / deleted / api_notes_fetched / api_transcripts_fetched / errors`.
+**No Drive?** Edit `config.toml`:
+```toml
+vault_path_glob = "~/GranolaVault"
+```
+Then `mkdir -p ~/GranolaVault`.
 
----
+### 4. First sync
 
-## Daily auto-sync (macOS)
+```bash
+.venv/bin/python scripts/sync.py --full --api-fill --quiet
+```
 
-A LaunchAgent fires `scripts/sync-daily.sh` once a day. Default: 09:00 local time.
+Pulls every meeting, fetches AI summaries + transcripts via API, writes the vault. ~30 seconds for ~100 meetings. Output is a JSON summary.
 
-**Install:**
+Open the vault in Obsidian: "Open folder as vault" → pick the folder.
+
+### 5. Daily auto-sync (macOS)
+
+Once-a-day pull at 09:00. Edit `scripts/granola-sync.plist.template` to change time.
+
 ```bash
 ./scripts/install-launchagent.sh
 ```
 
-The installer renders `scripts/granola-sync.plist.template` with your `$HOME` and the repo path, then bootstraps it under the label `local.granola-sync`. Re-running the installer reinstalls cleanly.
-
-To change the schedule, edit `scripts/granola-sync.plist.template` (`Hour` / `Minute`) and re-run the installer.
-
-**Verify:**
+Verify:
 ```bash
-launchctl print gui/$(id -u)/local.granola-sync | grep -E "(state|run count|last exit)"
+launchctl print gui/$(id -u)/local.granola-sync | grep -E "state|run count|last exit"
 ```
 
-**Test fire (without waiting for 09:00):**
+Test fire (don't wait for 09:00):
 ```bash
 launchctl kickstart -k gui/$(id -u)/local.granola-sync
-while pgrep -f sync-daily.sh > /dev/null; do sleep 1; done
 tail -30 ~/Library/Logs/granola-sync.log
 ```
 
-**Behavior:**
-- Laptop awake at 09:00 → runs.
-- Laptop asleep → fires on wake.
-- Laptop off / logged out → fires next login.
-- For "fires while laptop off" you'd add a `pmset` wake schedule — not included.
-
-**Token expiry:** the API access token is short-lived (~3h). The sync script auto-refreshes using the refresh token from `supabase.json`. No manual action needed.
-
-**Uninstall:**
+Uninstall:
 ```bash
 launchctl bootout gui/$(id -u)/local.granola-sync
 rm ~/Library/LaunchAgents/local.granola-sync.plist
 ```
 
----
+### 6. Optional: GitHub backup
 
-## Sync to Google Drive
+Adds a third backup layer. After each sync, vault gets `git add/commit/push`'d to a private repo.
 
-1. Install Google Drive for Desktop and sign in. Wait until `~/Library/CloudStorage/GoogleDrive-<email>/My Drive/` appears.
-2. Move the vault and update config:
+1. Create a **private** repo on github.com/new (no README/license).
+2. Init the vault as a git repo:
    ```bash
-   GD=$(ls -d ~/Library/CloudStorage/GoogleDrive-*/My\ Drive 2>/dev/null | head -1)
-   mv ~/GranolaVault "$GD/GranolaVault"
+   cd "$(.venv/bin/python -c 'import sys; sys.path.insert(0,"scripts"); import config; print(config.load().vault_path)')"
+   git init -b main
+   git remote add origin https://github.com/<you>/<your-private-repo>.git
+   git add -A
+   git commit -m "initial vault snapshot"
+   git push -u origin main
    ```
-3. Edit `config.toml`:
-   ```toml
-   vault_path_glob = "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
-   ```
 
-The state file (`.granola-sync-state.json`) moves with the directory. Sync stays idempotent.
+Daily wrapper auto-detects the `.git` dir and pushes after each sync. No further setup.
 
----
-
-## Chat with your notes
+### 7. Chat with your notes
 
 Inside Claude Code (with this repo open):
 
@@ -145,11 +120,26 @@ Inside Claude Code (with this repo open):
 ```
 
 Examples:
-- `/granola-chat Jobs what roles am I interviewing for?`
-- `/granola-chat "start-up*" what ideas keep recurring?`
+- `/granola-chat Personal what are recurring action items?`
+- `/granola-chat "start-up*" what ideas keep coming up?`
 - `/granola-chat * who have I been meeting with this week?`
 
-The first whitespace-separated token is the folder glob; the rest is the question. Folder names with spaces need quoting. The command reads matching `.md` files (size-capped at ~200KB to prevent context blowup) and answers with file citations and a `Sources` section.
+First token = folder glob; rest = question. Folder names with spaces need quoting. Reads matching `.md` files (size-capped at ~200KB) and answers with file citations.
+
+---
+
+## Manual sync flags
+
+```bash
+.venv/bin/python scripts/sync.py [flags]
+```
+
+- `--full` — walk every meeting (default uses a 24h delta window after first run).
+- `--api-fill` — fetch AI summaries + missing transcripts.
+- `--prune` — delete vault files for meetings trashed in Granola.
+- `--dry-run` — preview, write nothing.
+- `--since YYYY-MM-DD` — only meetings on/after this date.
+- `--quiet` — suppress per-meeting log lines.
 
 ---
 
@@ -157,7 +147,7 @@ The first whitespace-separated token is the folder glob; the rest is the questio
 
 ```
 GranolaVault/
-├── .granola-sync-state.json     # idempotency state; do not hand-edit
+├── .granola-sync-state.json     # state; do not hand-edit
 ├── Personal/
 │   └── 2026-04-12-1-1-with-alex.md
 ├── Work/
@@ -172,9 +162,7 @@ Each markdown file:
 ---
 title: "1:1 with Alex"
 date: 2026-04-12
-start: 2026-04-12T15:00:00-07:00
-attendees:
-  - "[[alex@example.com]]"
+attendees: ["[[alex@example.com]]"]
 granola_id: "abc123-..."
 folder: "Personal"
 tags: [granola, personal]
@@ -186,7 +174,7 @@ tags: [granola, personal]
 <your typed notes, if any>
 
 ## AI Summary
-<Granola's AI-generated summary, if any>
+<Granola's AI-generated summary>
 
 ## Transcript
 **microphone:** ...
@@ -195,34 +183,34 @@ tags: [granola, personal]
 
 ---
 
-## How the data flows
+## How it works
 
-1. **Cache read**: `granola_mcp` parses `~/Library/Application Support/Granola/cache-v6.json` → list of meetings with metadata, folders, attendees.
-2. **API enrich** (when `--api-fill` is on): for each meeting, fetch `/v1/get-document-panels` and `/v1/get-document-transcript` from `api.granola.ai` using the WorkOS access token already stored in `~/Library/Application Support/Granola/supabase.json`.
-3. **Render**: TipTap (ProseMirror) JSON → markdown via `scripts/tiptap_md.py`.
-4. **Write**: atomic write per file. State (`.granola-sync-state.json`) tracks `{sha256, path, ydoc_version, cached api content}` per meeting.
-5. **Prune** (when `--prune` is on): trashed meetings + orphaned vault files are deleted.
+1. **Cache read**: parses `~/Library/Application Support/Granola/cache-v6.json` → meetings with metadata.
+2. **API enrich** (`--api-fill`): fetches `/v1/get-document-panels` and `/v1/get-document-transcript` from `api.granola.ai` using the WorkOS access token already stored in `~/Library/Application Support/Granola/supabase.json`. Token auto-refreshes via the stored refresh token.
+3. **Render**: TipTap (ProseMirror) JSON → markdown.
+4. **Write**: atomic per-file writes. State file tracks sha256 + cached API content.
+5. **Prune**: trashed meetings + orphan vault files removed when `--prune` is set.
 
-No data is sent anywhere except calls to Granola's own API on your behalf. No third-party services.
+No data leaves your machine except calls to Granola's own API on your behalf.
 
 ---
 
 ## Troubleshooting
 
 - **`externally-managed-environment` on `pip install`** → use the venv: `python3 -m venv .venv && source .venv/bin/activate`.
-- **`vault_path_glob ... matched 0 paths`** → the vault directory doesn't exist yet. Create it (`mkdir -p ~/GranolaVault`) or change the path in `config.toml`.
-- **Cache version mismatch** → if Granola ships a new cache file (e.g. `cache-v7.json`), update `granola_cache_path_glob` in `config.toml`.
-- **API 401 Unauthorized in the daily log** → access token expired and Granola desktop wasn't open to refresh it. Sync script's refresher should handle this; if it doesn't, open Granola desktop once to mint a fresh refresh token.
-- **`/granola-chat` says "0 directories matched"** → check spelling, glob the folder name verbatim (`ls ~/GranolaVault/` shows the canonical names).
+- **`vault_path_glob ... matched 0 paths`** → the vault directory doesn't exist. Create it or change the path in `config.toml`.
+- **Cache version mismatch** → if Granola ships a new cache file (e.g. `cache-v7.json`), update `granola_cache_path` in `config.toml`.
+- **`workos_tokens.access_token missing` warning** → Granola desktop signed out or token cleared. Open Granola, sign in. Sync still runs (cache-only) until then.
+- **Daily sync didn't run** → check `~/Library/Logs/granola-sync.log` and `launchctl print gui/$(id -u)/local.granola-sync`.
 
 ---
 
 ## Limitations
 
-- **Mac only** for the LaunchAgent. The Python sync itself runs anywhere with Python 3.11+.
-- **Read-only**. Does not push edits back to Granola. The vault is a one-way mirror.
-- **Schema fragility**. Granola's local cache and private API are undocumented; future Granola versions may break the parser. Pin or fork the dep if this matters.
-- **Granola TOS**. The API path uses your own session token to read your own data. Treat this as personal use; don't redistribute the API client.
+- **Mac only** for the LaunchAgent. The Python sync runs anywhere with Python 3.11+.
+- **Read-only**. Does not push edits back to Granola.
+- **Schema fragility**. Granola's local cache and private API are undocumented; future Granola versions may break the parser.
+- **TOS**. The API path uses your own session token to read your own data. Personal use only; don't redistribute.
 
 ---
 
