@@ -1,0 +1,15 @@
+# free-granola config
+
+# Glob pattern for the vault directory.
+# Local fallback until Google Drive for Desktop is mounted.
+# Once Drive is mounted, change to:
+#   "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
+vault_path_glob = "~/GranolaVault"
+
+# Granola desktop cache. Current schema = cache-v6.json.
+granola_cache_path = "~/Library/Application Support/Granola/cache-v6.json"
+
+# Optional attendee aliases — map raw email or display string to a canonical name
+# for cleaner [[wikilinks]] in frontmatter.
+[attendee_aliases]
+# "alex.chen@example.com" = "Alex Chen"
