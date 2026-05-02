@@ -24,12 +24,12 @@ cd "$REPO"
 
   if [ -d "$VAULT/.git" ]; then
     echo "--- vault git push ---"
-    cd "$VAULT"
-    git add -A
-    if ! git diff --cached --quiet; then
-      git -c user.email=granola-sync@local -c user.name="granola-sync" \
+    GIT_OPTS=(--git-dir="$VAULT/.git" --work-tree="$VAULT")
+    git "${GIT_OPTS[@]}" add -A
+    if ! git "${GIT_OPTS[@]}" diff --cached --quiet; then
+      git "${GIT_OPTS[@]}" -c user.email=granola-sync@local -c user.name="granola-sync" \
           commit -m "sync $(date -u '+%Y-%m-%dT%H:%M:%SZ')" --quiet
-      git push --quiet 2>&1 || echo "WARN: git push failed (non-fatal)"
+      git "${GIT_OPTS[@]}" push --quiet 2>&1 || echo "WARN: git push failed (non-fatal)"
     else
       echo "no vault changes to commit"
     fi
