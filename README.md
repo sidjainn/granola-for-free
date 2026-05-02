@@ -207,6 +207,6 @@ No data leaves your machine except calls to Granola's own API on your behalf.
 
 ---
 
-## License
+## Credits
 
-MIT.
+Built by [@sidjainn](https://github.com/sidjainn) — [sidjainn.github.io](https://sidjainn.github.io).
