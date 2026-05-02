@@ -42,22 +42,15 @@ pip install git+https://github.com/pedramamini/GranolaMCP
 
 ### 3. Pick a vault location
 
-Default: a folder inside Google Drive for Desktop's My Drive — gets auto-synced to cloud for free.
-
-Install Google Drive for Desktop and sign in. Wait for `~/Library/CloudStorage/GoogleDrive-<email>/My Drive/` to appear, then:
+Default: `~/GranolaVault` (regular home dir folder). Create it:
 
 ```bash
-GD=$(ls -d ~/Library/CloudStorage/GoogleDrive-*/My\ Drive 2>/dev/null | head -1)
-mkdir -p "$GD/GranolaVault"
+mkdir -p ~/GranolaVault
 ```
 
-Default `config.toml` already points to this path. No edit needed.
+**Add Google Drive backup (recommended)**: install Google Drive for Desktop → sign in → Drive Preferences → **My Mac** tab → **Add folder** → pick `~/GranolaVault`. Drive mirrors it under `Computers > My Mac > GranolaVault` on the web.
 
-**No Drive?** Edit `config.toml`:
-```toml
-vault_path_glob = "~/GranolaVault"
-```
-Then `mkdir -p ~/GranolaVault`.
+> Why not put the vault directly inside `~/Library/CloudStorage/GoogleDrive-*/My Drive/`? macOS TCC blocks LaunchAgent (daily auto-sync) processes from accessing that mount. Computers mirror sidesteps this and works out of the box.
 
 ### 4. First sync
 
