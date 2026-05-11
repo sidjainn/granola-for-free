@@ -262,51 +262,64 @@ def main() -> int:
 
     # Prune orphans: in state but not in current cache.
     pruned: list[str] = []
+    prune_aborted_reason: str | None = None
     if args.prune:
-        orphan_ids = [mid for mid in list(state.meetings.keys()) if mid not in seen_ids]
-        for mid in orphan_ids:
-            entry = state.meetings.get(mid, {})
-            rel = entry.get("path")
-            if rel:
-                fp = cfg.vault_path / rel
+        # Guardrail: if cache yields drastically fewer meetings than last known
+        # state, abort instead of nuking the vault. Common cause: Granola
+        # sign-out wipes the local cache to 0 docs.
+        prior_count = len(state.meetings)
+        if prior_count >= 10 and len(seen_ids) < prior_count * 0.5:
+            prune_aborted_reason = (
+                f"cache has {len(seen_ids)} meetings, state had {prior_count}. "
+                "Refusing to prune — likely cache wipe (e.g. Granola sign-out). "
+                "Sign in to Granola, let cache repopulate, then rerun with --prune."
+            )
+            print(f"WARN: prune aborted — {prune_aborted_reason}", file=sys.stderr)
+        else:
+            orphan_ids = [mid for mid in list(state.meetings.keys()) if mid not in seen_ids]
+            for mid in orphan_ids:
+                entry = state.meetings.get(mid, {})
+                rel = entry.get("path")
+                if rel:
+                    fp = cfg.vault_path / rel
+                    if args.dry_run:
+                        log(f"[dry-run] delete: {rel}")
+                    else:
+                        try:
+                            if fp.exists():
+                                fp.unlink()
+                            log(f"deleted: {rel}")
+                        except OSError as e:
+                            errors.append({"id": mid, "error": f"unlink {rel}: {e}"})
+                            continue
+                if not args.dry_run:
+                    state.meetings.pop(mid, None)
+                pruned.append(rel or mid)
+                counts["deleted"] += 1
+
+            # Disk-level orphan sweep: dated .md files not tracked in state.
+            # Only deletes files matching YYYY-MM-DD-*.md to avoid touching user notes.
+            dated_re = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
+            tracked_paths = {e["path"] for e in state.meetings.values() if e.get("path")}
+            # Also keep paths just written this run.
+            tracked_paths.update(p.relative_to(cfg.vault_path).as_posix() for p in taken.keys())
+            for f in cfg.vault_path.rglob("*.md"):
+                rel = f.relative_to(cfg.vault_path).as_posix()
+                if rel in tracked_paths:
+                    continue
+                if not dated_re.match(f.name):
+                    continue
                 if args.dry_run:
-                    log(f"[dry-run] delete: {rel}")
+                    log(f"[dry-run] delete-orphan: {rel}")
                 else:
                     try:
-                        if fp.exists():
-                            fp.unlink()
-                        log(f"deleted: {rel}")
+                        f.unlink()
+                        log(f"deleted-orphan: {rel}")
                     except OSError as e:
-                        errors.append({"id": mid, "error": f"unlink {rel}: {e}"})
+                        errors.append({"path": rel, "error": f"unlink: {e}"})
                         continue
-            if not args.dry_run:
-                state.meetings.pop(mid, None)
-            pruned.append(rel or mid)
-            counts["deleted"] += 1
-
-        # Disk-level orphan sweep: dated .md files not tracked in state.
-        # Only deletes files matching YYYY-MM-DD-*.md to avoid touching user notes.
-        dated_re = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
-        tracked_paths = {e["path"] for e in state.meetings.values() if e.get("path")}
-        # Also keep paths just written this run.
-        tracked_paths.update(p.relative_to(cfg.vault_path).as_posix() for p in taken.keys())
-        for f in cfg.vault_path.rglob("*.md"):
-            rel = f.relative_to(cfg.vault_path).as_posix()
-            if rel in tracked_paths:
-                continue
-            if not dated_re.match(f.name):
-                continue
-            if args.dry_run:
-                log(f"[dry-run] delete-orphan: {rel}")
-            else:
-                try:
-                    f.unlink()
-                    log(f"deleted-orphan: {rel}")
-                except OSError as e:
-                    errors.append({"path": rel, "error": f"unlink: {e}"})
-                    continue
-            pruned.append(rel)
-            counts["deleted"] += 1
+                pruned.append(rel)
+                counts["deleted"] += 1
 
     # Refresh folders index.
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -331,6 +344,7 @@ def main() -> int:
         "dry_run": args.dry_run,
         "since": since.isoformat() if since else None,
         "api_fill_skipped": api_skipped_reason,
+        "prune_aborted": prune_aborted_reason,
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 1 if errors else 0

@@ -17,7 +17,10 @@ cd "$REPO"
     echo "ERROR: venv missing at $REPO/.venv. Recreate with: python3 -m venv .venv && .venv/bin/pip install git+https://github.com/pedramamini/GranolaMCP"
     exit 1
   fi
-  "$REPO/.venv/bin/python" "$REPO/scripts/sync.py" --prune --api-fill --quiet
+  # NOTE: --prune omitted on purpose. Cache wipes (e.g. Granola sign-out) can
+  # empty the cache; pruning then deletes the whole vault. Run prune manually
+  # when you are sure the cache is healthy.
+  "$REPO/.venv/bin/python" "$REPO/scripts/sync.py" --api-fill --quiet
 
   # Resolve vault path from config (single source of truth).
   VAULT="$("$REPO/.venv/bin/python" -c "import sys; sys.path.insert(0, '$REPO/scripts'); import config; print(config.load().vault_path)")"
