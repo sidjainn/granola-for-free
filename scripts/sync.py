@@ -151,14 +151,38 @@ def main() -> int:
             ydoc_ver = raw_doc.get("ydoc_version")
 
             prior_api = (state.meetings.get(granola_id) or {}).get("api") or {}
+            prior_source = prior_api.get("panels_source")  # "inline" or "full"
+            # A cached "inline" render is fresh enough for non-api-fill runs but
+            # must be re-upgraded to "full" when --api-fill is set.
+            need_full = api is not None and prior_source != "full"
             cache_fresh = (
                 "panels_md" in prior_api
                 and prior_api.get("ydoc_version") == ydoc_ver
+                and not need_full
             )
             api_dirty = False
             ai_panels_md = prior_api.get("panels_md")
 
-            # AI panels: fetch always when --api-fill and cache stale, regardless of local notes.
+            # Inline panel fallback. /v2/get-documents returns the last viewed
+            # panel (typically the AI auto-generated one) without a separate
+            # request. Render that into ai_panels_md when cache is empty/stale
+            # so daily syncs without --api-fill still get AI summaries.
+            if not cache_fresh and not need_full:
+                inline_panel = (raw_doc.get("last_viewed_panel") or {})
+                inline_content = inline_panel.get("content") if isinstance(inline_panel, dict) else None
+                if inline_content:
+                    from tiptap_md import render as tiptap_render
+
+                    inline_md = tiptap_render(inline_content)
+                    if inline_md.strip():
+                        title = inline_panel.get("title") or "Panel"
+                        ai_panels_md = f"### {title}\n\n{inline_md}"
+                        prior_api["panels_md"] = ai_panels_md
+                        prior_api["panels_source"] = "inline"
+                        api_dirty = True
+
+            # Full panels: with --api-fill, refetch every panel so non-default
+            # panels (Outline, Action items, custom) appear. Overrides inline.
             if api is not None and not cache_fresh:
                 from granola_api import GranolaAPIError
                 from tiptap_md import render as tiptap_render
@@ -174,6 +198,7 @@ def main() -> int:
                             blocks.append(f"### {p.get('title') or 'Panel'}\n\n{md}")
                     ai_panels_md = "\n\n".join(blocks) or None
                     prior_api["panels_md"] = ai_panels_md
+                    prior_api["panels_source"] = "full"
                     api_dirty = True
                     counts["api_notes_fetched"] += 1
                 except GranolaAPIError as e:

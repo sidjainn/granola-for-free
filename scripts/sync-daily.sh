@@ -14,12 +14,15 @@ cd "$REPO"
 {
   echo "===== $(date -u '+%Y-%m-%dT%H:%M:%SZ') sync start ====="
   if [ ! -x "$REPO/.venv/bin/python" ]; then
-    echo "ERROR: venv missing at $REPO/.venv. Recreate with: python3 -m venv .venv && .venv/bin/pip install git+https://github.com/pedramamini/GranolaMCP"
+    echo "ERROR: venv missing at $REPO/.venv. Recreate with: python3 -m venv .venv"
     exit 1
   fi
-  # NOTE: --prune omitted on purpose. Cache wipes (e.g. Granola sign-out) can
-  # empty the cache; pruning then deletes the whole vault. Run prune manually
-  # when you are sure the cache is healthy.
+  # NOTE: --prune omitted on purpose. Past incident: a Granola sign-out
+  # emptied the local cache; pruning then nuked the vault. Guardrail in
+  # sync.py now refuses to prune on suspicious deltas, but we still leave
+  # prune as an explicit manual action. --api-fill pulls full panels +
+  # transcripts on top of the inline panel that v2/get-documents already
+  # returns.
   "$REPO/.venv/bin/python" "$REPO/scripts/sync.py" --api-fill --quiet
 
   # Resolve vault path from config (single source of truth).

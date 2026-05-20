@@ -6,8 +6,9 @@
 #   "~/Library/CloudStorage/GoogleDrive-*/My Drive/GranolaVault"
 vault_path_glob = "~/GranolaVault"
 
-# Granola desktop cache. Current schema = cache-v6.json.
-granola_cache_path = "~/Library/Application Support/Granola/cache-v6.json"
+# Granola desktop cache. No longer read (the cache is encrypted in May 2026
+# builds). Sync now talks to api.granola.ai directly. Left here for reference.
+# granola_cache_path = "~/Library/Application Support/Granola/cache-v6.json"
 
 # Optional attendee aliases — map raw email or display string to a canonical name
 # for cleaner [[wikilinks]] in frontmatter.

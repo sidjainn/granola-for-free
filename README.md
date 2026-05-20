@@ -10,7 +10,7 @@ macOS only. Should work on Linux with small tweaks; Windows untested.
 
 ## What it does
 
-- **Pulls** meetings from Granola's local desktop cache (`cache-v6.json`).
+- **Pulls** meetings directly from `api.granola.ai` using your already-signed-in desktop access token.
 - **Enriches** with AI summaries + full transcripts via Granola's authenticated API (uses your already-signed-in desktop session token; no extra credentials).
 - **Mirrors** Granola's folder structure under a vault directory.
 - **Renders** each meeting as markdown with frontmatter (title, date, attendees, tags, granola_id).
@@ -26,7 +26,7 @@ macOS only. Should work on Linux with small tweaks; Windows untested.
 
 ### 1. Prerequisites
 
-- **Granola desktop** installed and signed in. Open it once so the cache populates.
+- **Granola desktop** installed and signed in. The sync reuses its stored access token.
 - **Python 3.11+** (`python3 --version`).
 - **Claude Code** for the `/granola-sync` and `/granola-chat` slash commands. Optional — scripts run standalone too.
 
@@ -37,8 +37,10 @@ git clone https://github.com/sidjainn/granola-for-free.git free-granola
 cd free-granola
 python3 -m venv .venv
 source .venv/bin/activate
-pip install git+https://github.com/pedramamini/GranolaMCP
 ```
+
+No third-party Python packages needed — the sync uses only the standard
+library. The venv exists so the LaunchAgent has a stable interpreter path.
 
 ### 3. Pick a vault location
 
@@ -178,13 +180,18 @@ tags: [granola, personal]
 
 ## How it works
 
-1. **Cache read**: parses `~/Library/Application Support/Granola/cache-v6.json` → meetings with metadata.
-2. **API enrich** (`--api-fill`): fetches `/v1/get-document-panels` and `/v1/get-document-transcript` from `api.granola.ai` using the WorkOS access token already stored in `~/Library/Application Support/Granola/supabase.json`. Token auto-refreshes via the stored refresh token.
+1. **Auth**: reads the WorkOS access token Granola desktop already stored for itself.
+   - Primary: `~/Library/Application Support/Granola/stored-accounts.json` (May 2026 multi-account format).
+   - Legacy fallback: `~/Library/Application Support/Granola/supabase.json`.
+   - Token auto-refreshes via the embedded refresh token when expiry is near.
+2. **Fetch**: calls `api.granola.ai` directly — `/v2/get-documents` (paginated meeting list with inline AI panel), `/v1/get-document-lists-metadata` (folder structure), `/v1/get-document-transcript` (transcripts), `/v1/get-document-panels` (all panels, only with `--api-fill`).
 3. **Render**: TipTap (ProseMirror) JSON → markdown.
 4. **Write**: atomic per-file writes. State file tracks sha256 + cached API content.
-5. **Prune**: trashed meetings + orphan vault files removed when `--prune` is set.
+5. **Prune** (`--prune`, manual only): trashed meetings + orphan vault files removed. Daily sync never prunes — guards against past incident where a Granola sign-out emptied state and `--prune` then nuked the vault.
 
 No data leaves your machine except calls to Granola's own API on your behalf.
+
+The previous design read the local cache file (`cache-v6.json`) via the `pedramamini/GranolaMCP` library, but Granola moved to an encrypted cache in May 2026. The current API-based design works without needing to decrypt anything.
 
 ---
 
@@ -192,8 +199,8 @@ No data leaves your machine except calls to Granola's own API on your behalf.
 
 - **`externally-managed-environment` on `pip install`** → use the venv: `python3 -m venv .venv && source .venv/bin/activate`.
 - **`vault_path_glob ... matched 0 paths`** → the vault directory doesn't exist. Create it or change the path in `config.toml`.
-- **Cache version mismatch** → if Granola ships a new cache file (e.g. `cache-v7.json`), update `granola_cache_path` in `config.toml`.
-- **`workos_tokens.access_token missing` warning** → Granola desktop signed out or token cleared. Open Granola, sign in. Sync still runs (cache-only) until then.
+- **`No usable token in stored-accounts.json or supabase.json`** → Granola desktop signed out. Open Granola, sign in. Sync resumes automatically next run.
+- **`refresh failed HTTP 400 invalid_grant`** → refresh token expired past the renewal window (often after sign-out). Sign back into Granola desktop to get a fresh token.
 - **Daily sync didn't run** → check `~/Library/Logs/granola-sync.log` and `launchctl print gui/$(id -u)/local.granola-sync`.
 
 ---
@@ -202,7 +209,7 @@ No data leaves your machine except calls to Granola's own API on your behalf.
 
 - **Mac only** for the LaunchAgent. The Python sync runs anywhere with Python 3.11+.
 - **Read-only**. Does not push edits back to Granola.
-- **Schema fragility**. Granola's local cache and private API are undocumented; future Granola versions may break the parser.
+- **Schema fragility**. Granola's private API is undocumented; future Granola versions may change endpoints or auth file shape.
 - **TOS**. The API path uses your own session token to read your own data. Personal use only; don't redistribute.
 
 ---
