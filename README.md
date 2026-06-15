@@ -39,8 +39,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-No third-party Python packages needed — the sync uses only the standard
-library. The venv exists so the LaunchAgent has a stable interpreter path.
+One third-party package — `cryptography` — is needed to decrypt Granola's
+token store (see below). The venv also gives the LaunchAgent a stable
+interpreter path.
+
+```bash
+pip install cryptography
+```
 
 ### 3. Pick a vault location
 
@@ -191,7 +196,9 @@ tags: [granola, personal]
 
 No data leaves your machine except calls to Granola's own API on your behalf.
 
-The previous design read the local cache file (`cache-v6.json`) via the `pedramamini/GranolaMCP` library, but Granola moved to an encrypted cache in May 2026. The current API-based design works without needing to decrypt anything.
+The previous design read the local cache file (`cache-v6.json`) via the `pedramamini/GranolaMCP` library, but Granola moved to an encrypted cache in May 2026, so sync switched to calling `api.granola.ai` directly with the token from the local credential store.
+
+Granola desktop >= ~7.319 (June 2026) then encrypted that credential store too. The plaintext `stored-accounts.json` / `supabase.json` are now stale leftovers; the live tokens live in the `.enc` siblings. Sync decrypts them: each `*.json.enc` is AES-256-GCM under a 32-byte data-encryption key, which lives base64-wrapped in `storage.dek`, itself Electron-safeStorage encrypted (Chromium OSCrypt) under the **"Granola Safe Storage"** macOS Keychain key. The chain is Keychain → `storage.dek` → DEK → `*.json.enc`. The first run triggers a one-time Keychain prompt — click **Always Allow** so the daily LaunchAgent sync runs unattended.
 
 ---
 
@@ -200,7 +207,9 @@ The previous design read the local cache file (`cache-v6.json`) via the `pedrama
 - **`externally-managed-environment` on `pip install`** → use the venv: `python3 -m venv .venv && source .venv/bin/activate`.
 - **`vault_path_glob ... matched 0 paths`** → the vault directory doesn't exist. Create it or change the path in `config.toml`.
 - **`No usable token in stored-accounts.json or supabase.json`** → Granola desktop signed out. Open Granola, sign in. Sync resumes automatically next run.
-- **`refresh failed HTTP 400 invalid_grant`** → refresh token expired past the renewal window (often after sign-out). Sign back into Granola desktop to get a fresh token.
+- **`refresh failed HTTP 400 invalid_grant`** → refresh token expired past the renewal window (often after sign-out). Sign back into Granola desktop to get a fresh token. Note: if the token files are stale even after re-auth, Granola is writing the encrypted `.enc` store and sync reads it via the Keychain chain (above) — no action needed beyond the one-time Keychain allow.
+- **`could not read 'Granola Safe Storage' from Keychain`** → the one-time Keychain prompt was denied. Re-run sync and click **Always Allow**.
+- **`ModuleNotFoundError: cryptography`** → `pip install cryptography` inside the venv.
 - **Daily sync didn't run** → check `~/Library/Logs/granola-sync.log` and `launchctl print gui/$(id -u)/local.granola-sync`.
 
 ---

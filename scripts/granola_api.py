@@ -4,9 +4,16 @@ Reads auth from Granola desktop's local credential store and talks to
 api.granola.ai directly. Replaces cache-file parsing since Granola moved
 to encrypted local storage (May 2026 builds).
 
-Auth file lookup order:
-  1. stored-accounts.json — May 2026 multi-account format
-  2. supabase.json — legacy single-account format
+Auth file lookup order (encrypted `.enc` preferred — plaintext variants are
+stale leftovers on builds >= 7.319 which only write the encrypted store):
+  1. stored-accounts.json[.enc] — May 2026 multi-account format
+  2. supabase.json[.enc] — legacy single-account format
+
+Encrypted store (Granola >= ~June 2026): each `*.json.enc` is AES-256-GCM
+(`[12B IV][ciphertext][16B tag]`) under a 32-byte data-encryption key (DEK).
+The DEK lives base64-wrapped in `storage.dek`, itself Electron-safeStorage
+encrypted (Chromium OSCrypt `v10`) under the "Granola Safe Storage" macOS
+Keychain key. So: Keychain -> decrypt storage.dek -> DEK -> decrypt *.enc.
 
 Both files contain WorkOS-issued access + refresh tokens. We never write
 them back to disk to avoid racing with the desktop app.
@@ -15,11 +22,15 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 API_BASE = "https://api.granola.ai"
 AUTH_BASE = "https://auth.granola.ai"
@@ -30,10 +41,56 @@ REFRESH_LEEWAY_SEC = 120
 GRANOLA_DIR = Path.home() / "Library/Application Support/Granola"
 STORED_ACCOUNTS_PATH = GRANOLA_DIR / "stored-accounts.json"
 SUPABASE_PATH = GRANOLA_DIR / "supabase.json"
+STORED_ACCOUNTS_ENC = GRANOLA_DIR / "stored-accounts.json.enc"
+SUPABASE_ENC = GRANOLA_DIR / "supabase.json.enc"
+STORAGE_DEK_PATH = GRANOLA_DIR / "storage.dek"
+KEYCHAIN_SERVICE = "Granola Safe Storage"
 
 
 class GranolaAPIError(RuntimeError):
     pass
+
+
+def _keychain_key() -> str:
+    """The OSCrypt password Electron stored in the macOS Keychain.
+
+    First read triggers a one-time GUI prompt; click "Always Allow".
+    """
+    out = subprocess.run(
+        ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+        capture_output=True,
+        text=True,
+    )
+    key = out.stdout.strip()
+    if not key:
+        raise GranolaAPIError(
+            f"could not read '{KEYCHAIN_SERVICE}' from Keychain: {out.stderr.strip()}"
+        )
+    return key
+
+
+def _oscrypt_decrypt(blob: bytes) -> bytes:
+    """Decrypt Electron safeStorage (Chromium OSCrypt, macOS 'v10') ciphertext."""
+    if blob[:3] != b"v10":
+        raise GranolaAPIError("unexpected safeStorage format (no 'v10' prefix)")
+    key = hashlib.pbkdf2_hmac("sha1", _keychain_key().encode(), b"saltysalt", 1003, 16)
+    dec = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
+    pt = dec.update(blob[3:]) + dec.finalize()
+    return pt[: -pt[-1]]  # strip PKCS7 padding
+
+
+def _dek() -> bytes:
+    """32-byte data-encryption key, base64-wrapped inside storage.dek."""
+    raw = _oscrypt_decrypt(STORAGE_DEK_PATH.read_bytes())
+    return base64.b64decode(raw.decode())
+
+
+def _decrypt_enc(path: Path) -> dict:
+    """Decrypt a Granola '*.json.enc' (aes-256-gcm, [12B IV][ct][16B tag])."""
+    blob = path.read_bytes()
+    iv, tag, ct = blob[:12], blob[-16:], blob[12:-16]
+    dec = Cipher(algorithms.AES(_dek()), modes.GCM(iv, tag)).decryptor()
+    return json.loads(dec.update(ct) + dec.finalize())
 
 
 def _b64url_json(seg: str) -> dict:
@@ -49,9 +106,12 @@ def _jwt_exp(token: str) -> int:
 
 
 def _read_stored_accounts() -> dict | None:
-    if not STORED_ACCOUNTS_PATH.exists():
+    if STORED_ACCOUNTS_ENC.exists():
+        raw = _decrypt_enc(STORED_ACCOUNTS_ENC)
+    elif STORED_ACCOUNTS_PATH.exists():
+        raw = json.loads(STORED_ACCOUNTS_PATH.read_text())
+    else:
         return None
-    raw = json.loads(STORED_ACCOUNTS_PATH.read_text())
     accounts = raw.get("accounts")
     if isinstance(accounts, str):
         accounts = json.loads(accounts)
@@ -67,9 +127,12 @@ def _read_stored_accounts() -> dict | None:
 
 
 def _read_legacy_supabase() -> dict | None:
-    if not SUPABASE_PATH.exists():
+    if SUPABASE_ENC.exists():
+        raw = _decrypt_enc(SUPABASE_ENC)
+    elif SUPABASE_PATH.exists():
+        raw = json.loads(SUPABASE_PATH.read_text())
+    else:
         return None
-    raw = json.loads(SUPABASE_PATH.read_text())
     tok = raw.get("workos_tokens") or raw.get("cognito_tokens")
     if isinstance(tok, str):
         tok = json.loads(tok)
