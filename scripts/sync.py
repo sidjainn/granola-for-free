@@ -89,12 +89,14 @@ def main() -> int:
 
     since: datetime | None = parse_since(args.since)
     if not since and not args.full and state.last_sync_iso:
-        # 24h overlap window for safety.
+        # 7-day overlap window: catches meetings edited or moved into a folder
+        # in Granola after their meeting date (backdated edits the prior 24h
+        # window silently skipped).
         try:
             from datetime import timedelta
 
             last = datetime.fromisoformat(state.last_sync_iso.replace("Z", "+00:00"))
-            since = last.astimezone(timezone.utc) - timedelta(hours=24)
+            since = last.astimezone(timezone.utc) - timedelta(days=7)
         except ValueError:
             since = None
 
