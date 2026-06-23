@@ -4,16 +4,22 @@ Reads auth from Granola desktop's local credential store and talks to
 api.granola.ai directly. Replaces cache-file parsing since Granola moved
 to encrypted local storage (May 2026 builds).
 
-Auth file lookup order (encrypted `.enc` preferred — plaintext variants are
-stale leftovers on builds >= 7.319 which only write the encrypted store):
+Auth file lookup order:
   1. stored-accounts.json[.enc] — May 2026 multi-account format
   2. supabase.json[.enc] — legacy single-account format
 
-Encrypted store (Granola >= ~June 2026): each `*.json.enc` is AES-256-GCM
-(`[12B IV][ciphertext][16B tag]`) under a 32-byte data-encryption key (DEK).
-The DEK lives base64-wrapped in `storage.dek`, itself Electron-safeStorage
-encrypted (Chromium OSCrypt `v10`) under the "Granola Safe Storage" macOS
-Keychain key. So: Keychain -> decrypt storage.dek -> DEK -> decrypt *.enc.
+Granola has flip-flopped between plaintext and encrypted stores: plaintext
+(pre-7.319), encrypted `.enc` (>= 7.319), then plaintext again (>= ~7.345,
+which removed storage.dek). `_read_store` therefore trusts whichever variant
+the desktop app wrote most recently among readable candidates, rather than
+always preferring one.
+
+Encrypted store: each `*.json.enc` is AES-256-GCM (`[12B IV][ciphertext]
+[16B tag]`) under a 32-byte data-encryption key (DEK). The DEK lives
+base64-wrapped in `storage.dek`, itself Electron-safeStorage encrypted
+(Chromium OSCrypt `v10`) under the "Granola Safe Storage" macOS Keychain key.
+So when encrypted: Keychain -> decrypt storage.dek -> DEK -> decrypt *.enc.
+The `.enc` path is only usable while storage.dek exists.
 
 Both files contain WorkOS-issued access + refresh tokens. We never write
 them back to disk to avoid racing with the desktop app.
@@ -105,12 +111,30 @@ def _jwt_exp(token: str) -> int:
         return 0
 
 
+def _read_store(plain: Path, enc: Path) -> dict | None:
+    """Load a Granola credential store, plaintext or encrypted.
+
+    Granola has flip-flopped: plaintext (pre-7.319), encrypted `.enc`
+    (>= 7.319), then plaintext again (>= ~7.345, storage.dek removed). The
+    `.enc` is only readable while storage.dek (the DEK) exists, so trust the
+    store the desktop app wrote most recently among the readable candidates.
+    """
+    have_plain = plain.exists()
+    enc_usable = enc.exists() and STORAGE_DEK_PATH.exists()
+    if have_plain and (
+        not enc_usable or plain.stat().st_mtime >= enc.stat().st_mtime
+    ):
+        return json.loads(plain.read_text())
+    if enc_usable:
+        return _decrypt_enc(enc)
+    if have_plain:
+        return json.loads(plain.read_text())
+    return None
+
+
 def _read_stored_accounts() -> dict | None:
-    if STORED_ACCOUNTS_ENC.exists():
-        raw = _decrypt_enc(STORED_ACCOUNTS_ENC)
-    elif STORED_ACCOUNTS_PATH.exists():
-        raw = json.loads(STORED_ACCOUNTS_PATH.read_text())
-    else:
+    raw = _read_store(STORED_ACCOUNTS_PATH, STORED_ACCOUNTS_ENC)
+    if raw is None:
         return None
     accounts = raw.get("accounts")
     if isinstance(accounts, str):
@@ -127,11 +151,8 @@ def _read_stored_accounts() -> dict | None:
 
 
 def _read_legacy_supabase() -> dict | None:
-    if SUPABASE_ENC.exists():
-        raw = _decrypt_enc(SUPABASE_ENC)
-    elif SUPABASE_PATH.exists():
-        raw = json.loads(SUPABASE_PATH.read_text())
-    else:
+    raw = _read_store(SUPABASE_PATH, SUPABASE_ENC)
+    if raw is None:
         return None
     tok = raw.get("workos_tokens") or raw.get("cognito_tokens")
     if isinstance(tok, str):
