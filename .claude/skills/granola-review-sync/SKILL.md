@@ -9,14 +9,9 @@ presenting a folder proposal table for approval before anything is written.
 
 ## Why this exists
 
-This is the **only** sync path. The old desktop-store pipeline was removed on
-2026-08-13: Granola moved credential storage into an encrypted `granola.db`
-whose key is not recoverable, so reading tokens off the local machine stopped
-working on 2026-07-16 and cannot be repaired. Nothing here touches Granola
-desktop — meetings come from the Granola MCP connector over the network.
-
-If you find references anywhere to `sync.py`, `granola_api.py`, `sync-daily.sh`,
-or a `local.granola-sync` launchd agent, they are stale; those were deleted.
+Meetings come from the Granola MCP connector over the network; nothing here
+reads Granola desktop's local files. See the README's History section for why
+the local-store approach was abandoned.
 
 **Known ceiling — state this to the user once per run, briefly:**
 transcripts, Granola folder metadata, and meeting end-times are gated to paid
