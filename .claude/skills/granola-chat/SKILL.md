@@ -1,4 +1,5 @@
 ---
+name: granola-chat
 description: Chat with your Granola meeting notes, scoped to a folder or glob.
 argument-hint: "<folder-glob> <question>"
 ---
